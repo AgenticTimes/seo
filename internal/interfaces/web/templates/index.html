@@ -1,0 +1,415 @@
+{{define "index"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SEO 趋势挖词台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <style>
+    .tree-row:hover { background: var(--bs-tertiary-bg); }
+    .spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; }
+    .spark > span { width: 8px; border-radius: 2px 2px 0 0; background: var(--bs-primary); }
+    .step-btn { min-width: 8.5rem; }
+  </style>
+</head>
+<body class="bg-body-tertiary">
+
+<nav class="navbar bg-dark border-bottom" data-bs-theme="dark">
+  <div class="container-fluid">
+    <span class="navbar-brand fw-semibold">SEO 趋势挖词台</span>
+    <div class="d-flex flex-wrap gap-2 small">
+      <span class="badge text-bg-secondary">节点 {{.View.Stats.Total}}</span>
+      <span class="badge text-bg-light text-dark">待验证 {{.View.Stats.Discovered}}</span>
+      <span class="badge text-bg-info">已判定 {{.View.Stats.Validated}}</span>
+      <span class="badge text-bg-success">种子候选 {{.View.Stats.SeedCandidates}}</span>
+      <span class="badge text-bg-warning">过宽 {{.View.Stats.TooBroad}}</span>
+      <span class="badge text-bg-dark border">放弃 {{.View.Stats.Discarded}}</span>
+    </div>
+  </div>
+</nav>
+
+<main class="container-fluid py-4">
+  {{if not .Selected}}
+  {{if .Msg}}<div class="alert alert-success py-2">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="alert alert-danger py-2">{{.Err}}</div>{{end}}
+  {{end}}
+
+  <div class="row g-4">
+    <div class="col-xl-4">
+
+      <div class="card mb-4">
+        <div class="card-header fw-semibold">① 开始探索</div>
+        <div class="card-body">
+          <form method="post" action="/explore">
+            <label class="form-label small text-secondary" for="terms">种子词（每行一个）</label>
+            <textarea class="form-control mb-2" id="terms" name="terms" rows="3" placeholder="ai agent&#10;ai coding"></textarea>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label small text-secondary" for="country">地区</label>
+                <input class="form-control" id="country" name="country" value="{{.Country}}">
+              </div>
+              <div class="col-6">
+                <label class="form-label small text-secondary" for="entity">查询实体</label>
+                <select class="form-select" id="entity" name="entity">
+                  <option value="TOPIC" {{if eq .Entity "TOPIC"}}selected{{end}}>Topic（推荐）</option>
+                  <option value="SEARCH_TERM" {{if eq .Entity "SEARCH_TERM"}}selected{{end}}>Search term</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary w-100 mt-3">开始探索</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">② 关键词图谱</span>
+          <span class="small text-secondary">{{len .View.All}} 个节点</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <tbody>
+              {{template "rows" (dict "Nodes" .View.Roots "Sel" .Selected)}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header fw-semibold">待验证队列</div>
+        <ul class="list-group list-group-flush">
+          {{range .View.Queue}}
+          <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <a class="text-decoration-none" href="/?k={{urlquery .Key.String}}">{{.Key.Term}}</a>
+            <span class="badge {{stateClass .State}}">{{stateLabel .State}}</span>
+          </li>
+          {{else}}
+          <li class="list-group-item text-secondary small">队列为空，先扩展一个种子词。</li>
+          {{end}}
+        </ul>
+      </div>
+
+    </div>
+
+    <div class="col-xl-8">
+      {{if .Selected}}
+      <div class="card" id="detail">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <span class="fs-5 fw-semibold">{{.Selected.Key.Term}}</span>
+            <span class="text-secondary small ms-2">{{.Selected.Key.Country}} · {{.Selected.Key.Entity}}</span>
+          </div>
+          <div class="d-flex flex-wrap gap-1">
+            <span class="badge {{sourceClass .Selected.Source}}">来源 {{sourceLabel .Selected.Source}}</span>
+            <span class="badge {{stateClass .Selected.State}}">{{stateLabel .Selected.State}}</span>
+            <span class="badge {{verdictClass .Selected.Verdict}}">{{verdictLabel .Selected.Verdict}}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          {{if .Msg}}<div class="alert alert-success py-2">{{.Msg}}</div>{{end}}
+          {{if .Err}}<div class="alert alert-danger py-2">{{.Err}}</div>{{end}}
+          {{if and .BroadAdvice.Suggest .Selected}}
+          <div class="alert alert-secondary py-2">
+            <div class="fw-semibold mb-1">建议：这个词可能过于宽泛</div>
+            <ul class="mb-2 ps-3 small">
+              {{range .BroadAdvice.Reasons}}<li>{{broadReason .}}</li>{{end}}
+            </ul>
+            <form method="post" action="/broad" class="d-inline">
+              {{hiddenKey .Selected.Key}}
+              <input type="hidden" name="reason" value="系统建议：过于宽泛（{{range $i, $r := .BroadAdvice.Reasons}}{{if $i}}、{{end}}{{broadReason $r}}{{end}}）">
+              <button class="btn btn-outline-secondary btn-sm">采纳建议并关闭</button>
+            </form>
+            <span class="small text-secondary ms-2">仅建议，不会自动关闭。</span>
+          </div>
+          {{end}}
+          {{if and .Captcha .Selected}}
+          <div class="alert alert-warning">
+            <div class="fw-semibold mb-1">Google 要求人机验证</div>
+            <ol class="mb-2 ps-3 small">
+              <li>切换到已连接的 Chrome 窗口，验证页已经打开。</li>
+              <li>在页面上完成验证。</li>
+              <li>回到这里，重新点刚才那一步（③ 扩展 / ④ 记录观测）。</li>
+            </ol>
+            {{if not .VerifyVisible}}
+            <div class="small mb-2">
+              当前是无头模式，看不到验证页。请改用
+              <code>-gateway browser -chrome-remote http://127.0.0.1:9222</code>
+              连接有头 Chrome，或加 <code>-headless=false</code>。
+            </div>
+            {{else}}
+            <div class="small mb-2">
+              看不到验证页？当前 Chrome 可能是无头模式，请用有头 Chrome 重新启动，再用
+              <code>-chrome-remote</code> 连接。
+            </div>
+            {{end}}
+            {{if .CanVerify}}
+            <form method="post" action="/verify">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-warning btn-sm">重新打开验证页</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+          <div class="row g-3 small mb-4">
+            <div class="col-auto">深度 <strong>{{.Selected.Depth}}</strong></div>
+            <div class="col-auto">发现于 <strong>{{.Selected.DiscoveredAt.Format "2006-01-02 15:04"}}</strong></div>
+            {{if .Selected.Parent}}<div class="col-auto">父节点 <strong>{{.Selected.Parent.Term}}</strong></div>{{end}}
+            {{if .Selected.TooBroad}}<div class="col-auto text-warning-emphasis">过宽原因：{{.Selected.TooBroadReason}}</div>{{end}}
+          </div>
+
+          <h2 class="h6 text-secondary">每一步都可手动触发</h2>
+          <div class="d-flex flex-wrap gap-2 mb-4">
+            <form method="post" action="/expand">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-outline-primary step-btn" {{if not .CanExpand}}disabled title="只有种子或已入队的词可以扩展"{{end}}>③ 扩展该词</button>
+            </form>
+            <form method="post" action="/observe">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-outline-primary step-btn" {{if .Closed}}disabled title="该词已关闭"{{end}}>④ 记录观测</button>
+            </form>
+            <form method="post" action="/assess">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-outline-primary step-btn" {{if .Closed}}disabled title="该词已关闭"{{end}}>⑤ 判定趋势</button>
+            </form>
+            <form method="post" action="/advance">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-outline-success step-btn" {{if not .CanAdvance}}disabled title="需要「新兴/持续增长」判定，且必须是扩展出来的子词（种子本身就是起点）"{{end}}>⑥ 进入下一轮</button>
+            </form>
+          </div>
+
+          <div class="row g-4">
+            <div class="col-lg-7">
+              <h2 class="h6 text-secondary">趋势观测</h2>
+              {{if .Selected.Observations}}
+              <table class="table table-sm align-middle">
+                <thead class="table-light">
+                  <tr><th>窗口</th><th>形状（0–100 归一化）</th><th class="text-end">变化</th></tr>
+                </thead>
+                <tbody>
+                  {{range .Selected.Observations}}
+                  <tr>
+                    <td><span class="badge text-bg-light border">{{.Window}}</span></td>
+                    <td>
+                      <div class="spark">
+                        {{range displaySamples .}}<span style="height: {{barHeight .}}%"></span>{{end}}
+                      </div>
+                    </td>
+                    <td class="text-end fw-semibold">{{changePct .}}</td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+              <p class="text-secondary small mb-0">
+                归一化指数不能跨窗口比较绝对量，只看同一窗口的形状（BR-06）。
+              </p>
+              {{if not .Selected.Signals.IsZero}}
+              <h2 class="h6 text-secondary mt-4">分析信号</h2>
+              <div class="row g-2 small">
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">7D 变化</div>
+                    <div class="fw-semibold">{{signedPct .Selected.Signals.SevenDayChange}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">30D 动量</div>
+                    <div class="fw-semibold">{{printf "%+.3f" .Selected.Signals.Momentum30}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">90D 动量</div>
+                    <div class="fw-semibold">{{printf "%+.3f" .Selected.Signals.Momentum90}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">加速度</div>
+                    <div class="fw-semibold">{{printf "%+.3f" .Selected.Signals.Acceleration}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">尖峰比</div>
+                    <div class="fw-semibold">{{printf "%.2f" .Selected.Signals.SpikeRatio}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">季节强度</div>
+                    <div class="fw-semibold">{{pct0 .Selected.Signals.Seasonality}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">结构增长</div>
+                    <div class="fw-semibold">{{signedPct .Selected.Signals.StructuralGrowth}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">意图</div>
+                    <div class="fw-semibold">{{intentLabel .Selected.Signals.Intent}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">采样点</div>
+                    <div class="fw-semibold">{{.Selected.Signals.Points30}} / {{.Selected.Signals.Points90}}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">非拉丁占比</div>
+                    <div class="fw-semibold">{{pct0 .Selected.Signals.NonLatinRatio}}</div>
+                  </div>
+                </div>
+                {{if gt .Selected.Signals.ChildCount 0}}
+                <div class="col-6 col-md-4">
+                  <div class="border rounded p-2">
+                    <div class="text-secondary">子词品牌占比</div>
+                    <div class="fw-semibold">{{pct0 .Selected.Signals.BrandShare}}（{{.Selected.Signals.ChildCount}} 个子词）</div>
+                  </div>
+                </div>
+                {{end}}
+              </div>
+              <div class="mt-2 d-flex flex-wrap gap-1">
+                {{if .Selected.Signals.BrandMention}}<span class="badge text-bg-warning">品牌词</span>{{end}}
+                {{if ge .Selected.Signals.Seasonality 0.3}}<span class="badge text-bg-primary">季节性强</span>{{end}}
+                {{if ge .Selected.Signals.SpikeRatio 3.0}}<span class="badge text-bg-danger">事件尖峰</span>{{end}}
+                {{if ge .Selected.Signals.NonLatinRatio 0.3}}<span class="badge text-bg-info">非目标语言</span>{{end}}
+                {{if ge .Selected.Signals.BrandShare 0.4}}<span class="badge text-bg-danger">红海入口</span>{{end}}
+                {{if lt .Selected.Signals.Points30 7}}<span class="badge text-bg-secondary">采样不足</span>{{end}}
+              </div>
+              {{if .Selected.Signals.Reasons}}
+              <h2 class="h6 text-secondary mt-3">结论依据</h2>
+              <ul class="small text-secondary ps-3 mb-0">
+                {{range .Selected.Signals.Reasons}}<li>{{reasonLabel .}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{end}}
+              {{else}}
+              <p class="text-secondary small">还没有观测数据，点「④ 记录观测」。</p>
+              {{end}}
+            </div>
+
+            <div class="col-lg-5">
+              <h2 class="h6 text-secondary">判定为过于宽泛（BR-04）</h2>
+              {{if .Selected.TooBroad}}
+              <p class="small text-secondary mb-0">该词已关闭，不再参与挖掘与机会评估。</p>
+              {{else}}
+              <form method="post" action="/broad">
+                {{hiddenKey .Selected.Key}}
+                <input class="form-control mb-2" name="reason" value="过于宽泛，无法判断具体意图" required>
+                <button class="btn btn-outline-warning w-100">标记并关闭</button>
+              </form>
+              {{end}}
+              <hr>
+              <h2 class="h6 text-secondary">判定口径</h2>
+              <ul class="small text-secondary ps-3 mb-0">
+                <li>30D↓ → 下降</li>
+                <li>30D↑ + 90D↑ + 12M↑ → 持续增长</li>
+                <li>30D↑ + 90D↑ + 12M 平稳 → 新兴</li>
+                <li>30D↑ + 90D 未涨 → 短期波动</li>
+                <li>5Y 长期上涨 → 长期赛道（非新机会）</li>
+                <li>季节性强 → 看结构增长，增长为「季节性增长」</li>
+                <li>单次尖峰 → 事件尖峰，不算增长</li>
+              </ul>
+            </div>
+          </div>
+
+          <hr class="my-4">
+          <h2 class="h6 text-secondary">机会评估（BR-20）</h2>
+          {{if .Opportunity}}
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <div>
+              <span class="badge {{oppStateClass .Opportunity.State}}">{{oppState .Opportunity.State}}</span>
+              <span class="small text-secondary ms-2">意图 {{intentLabel .Opportunity.Intent}} · 判定 {{verdictLabel .Opportunity.Trend}}</span>
+            </div>
+            {{if .Opportunity.Note}}<div class="small text-secondary">备注：{{.Opportunity.Note}}</div>{{end}}
+          </div>
+          <ul class="list-group list-group-flush mb-2">
+            {{range .Opportunity.Evidence}}
+            <li class="list-group-item px-0 py-1">
+              <span class="badge text-bg-light border">{{evidenceSource .Source}}</span>
+              {{if .URL}}<a class="ms-2" href="{{.URL}}" target="_blank" rel="noreferrer noopener">链接</a>{{end}}
+              {{if .Summary}}<span class="small ms-2">{{.Summary}}</span>{{end}}
+            </li>
+            {{else}}
+            <li class="list-group-item px-0 py-1 small text-secondary">还没有外部证据。趋势不等于付费意愿（BR-11）。</li>
+            {{end}}
+          </ul>
+          {{if oppOpen .Opportunity.State}}
+          <form method="post" action="/opportunity/evidence" class="row g-2 mb-2">
+            {{hiddenKey .Selected.Key}}
+            <div class="col-md-3">
+              <select class="form-select form-select-sm" name="source">
+                <option value="REDDIT">Reddit</option>
+                <option value="COMPETITOR">竞品</option>
+                <option value="REVIEW">评论</option>
+                <option value="SEARCH_VOLUME">搜索量</option>
+                <option value="OTHER">其他</option>
+              </select>
+            </div>
+            <div class="col-md-4"><input class="form-control form-control-sm" name="url" placeholder="证据链接"></div>
+            <div class="col-md-3"><input class="form-control form-control-sm" name="summary" placeholder="摘要"></div>
+            <div class="col-md-2"><button class="btn btn-outline-primary btn-sm w-100">添加证据</button></div>
+          </form>
+          <div class="d-flex flex-wrap gap-2">
+            <form method="post" action="/opportunity/decide" class="d-flex gap-2">
+              {{hiddenKey .Selected.Key}}
+              <input type="hidden" name="approve" value="1">
+              <input class="form-control form-control-sm" name="note" placeholder="批准备注（可选）">
+              <button class="btn btn-success btn-sm">批准</button>
+            </form>
+            <form method="post" action="/opportunity/decide" class="d-flex gap-2">
+              {{hiddenKey .Selected.Key}}
+              <input class="form-control form-control-sm" name="note" placeholder="拒绝原因" required>
+              <button class="btn btn-outline-danger btn-sm">拒绝</button>
+            </form>
+          </div>
+          {{else}}
+          <p class="small text-secondary mb-0">决策已定，机会关闭。</p>
+          {{end}}
+          {{else if .CanCreate}}
+          <form method="post" action="/opportunity/create" class="d-flex align-items-center gap-2">
+            {{hiddenKey .Selected.Key}}
+            <button class="btn btn-outline-success btn-sm">创建机会</button>
+            <span class="small text-secondary">先建候选，再补外部证据，最后批准。</span>
+          </form>
+          {{else}}
+          <p class="small text-secondary mb-0">{{.OpportunityHint}}</p>
+          {{end}}
+        </div>
+      </div>
+      {{else}}
+      <div class="card">
+        <div class="card-body text-center text-secondary py-5">
+          从左侧图谱或队列选择一个关键词，然后逐步触发 ③～⑥。
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</main>
+
+<script src="/static/bootstrap.bundle.min.js"></script>
+</body>
+</html>{{end}}
+
+{{define "rows"}}{{range .Nodes}}
+<tr class="tree-row {{if sameKey .Keyword $.Sel}}table-active{{end}}">
+  <td style="padding-left: {{indent .Keyword.Depth}}">
+    <a class="text-decoration-none" href="/?k={{urlquery .Keyword.Key.String}}">{{.Keyword.Key.Term}}</a>
+    <span class="badge {{sourceClass .Keyword.Source}} ms-1">{{sourceLabel .Keyword.Source}}</span>
+    {{if .Keyword.TooBroad}}<span class="badge text-bg-warning ms-1">过宽</span>{{end}}
+  </td>
+  <td class="text-end">
+    <span class="badge {{stateClass .Keyword.State}}">{{stateLabel .Keyword.State}}</span>
+    <span class="badge {{verdictClass .Keyword.Verdict}}">{{verdictLabel .Keyword.Verdict}}</span>
+  </td>
+</tr>
+{{if .Children}}{{template "rows" (dict "Nodes" .Children "Sel" $.Sel)}}{{end}}
+{{end}}{{end}}

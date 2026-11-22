@@ -1,0 +1,16 @@
+# build output
+/bin/
+*.test
+
+# local database
+*.db
+*.db-shm
+*.db-wal
+
+# local runtime files
+.seotrend.pid
+.DS_Store
+
+# agent scratch and chat logs
+.opencode/
+conversations/
