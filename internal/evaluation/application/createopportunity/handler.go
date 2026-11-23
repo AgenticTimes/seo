@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
+	"seo/internal/discovery/application/support"
 	"seo/internal/discovery/domain/hotsearch"
 	"seo/internal/evaluation/domain/opportunity"
-	"seo/internal/shared/kernel"
 )
 
 // Command is the intent to evaluate one keyword.
@@ -41,7 +41,7 @@ func New(keywords hotsearch.Repository, opps opportunity.Repository, now func() 
 // Execute is idempotent: an existing decision is returned unchanged.
 func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	var out Result
-	key, err := keyFrom(cmd)
+	key, err := support.KeyFromStrings(cmd.Term, cmd.Country, cmd.Entity)
 	if err != nil {
 		return out, err
 	}
@@ -63,7 +63,7 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	if keyword.TooBroad() {
 		return out, fmt.Errorf("%w: keyword is too broad", opportunity.ErrNotEligible)
 	}
-	candidate, err := opportunity.New(key, keyword.Signals().Intent, keyword.Verdict(), now(h.now))
+	candidate, err := opportunity.New(key, keyword.Signals().Intent, keyword.Verdict(), support.Clock(h.now))
 	if err != nil {
 		return out, err
 	}
@@ -73,33 +73,4 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	out.State = candidate.State()
 	out.Created = true
 	return out, nil
-}
-
-func keyFrom(cmd Command) (hotsearch.Key, error) {
-	term, err := kernel.NewTerm(cmd.Term)
-	if err != nil {
-		return hotsearch.Key{}, err
-	}
-	country := kernel.CountryWorldwide
-	if cmd.Country != "" {
-		country, err = kernel.NewCountry(cmd.Country)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	entity := kernel.EntityTopic
-	if cmd.Entity != "" {
-		entity, err = kernel.ParseEntityType(cmd.Entity)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	return hotsearch.NewKey(term, country, entity)
-}
-
-func now(clock func() time.Time) time.Time {
-	if clock == nil {
-		return time.Now().UTC()
-	}
-	return clock().UTC()
 }

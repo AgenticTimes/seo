@@ -326,3 +326,114 @@ func (k *Keyword) recordDefaultsForTest(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestClassifyRejectsThinLongWindows applies BR-16 to the long windows: a
+// present-but-thin series has no direction and may not decide the cross-check.
+func TestClassifyRejectsThinLongWindows(t *testing.T) {
+	policy := DefaultTrendPolicy()
+
+	tests := []struct {
+		name    string
+		series  map[Window][]int
+		verdict Verdict
+		reason  string
+	}{
+		{
+			name: "single point 90d and 12m cannot decide short lived",
+			series: map[Window][]int{
+				Window30D: {10, 20}, Window90D: {10}, Window12M: {10},
+			},
+			verdict: VerdictInsufficient,
+			reason:  ReasonThinLongWindow,
+		},
+		{
+			name: "single point 12m cannot decide emerging",
+			series: map[Window][]int{
+				Window30D: {10, 20}, Window90D: {10, 20}, Window12M: {10},
+			},
+			verdict: VerdictInsufficient,
+			reason:  ReasonThinLongWindow,
+		},
+		{
+			name: "single point 90d cannot decide stable",
+			series: map[Window][]int{
+				Window30D: {10, 20}, Window90D: {10}, Window12M: {10, 20},
+			},
+			verdict: VerdictInsufficient,
+			reason:  ReasonThinLongWindow,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := make(map[Window]Observation, len(tc.series))
+			for w, samples := range tc.series {
+				obs[w] = mustObs(t, w, samples...)
+			}
+			sig := ComputeSignals("", obs, policy)
+			verdict, reasons := analyzeTrend(obs, sig, policy)
+			if verdict != tc.verdict {
+				t.Fatalf("verdict = %s, want %s (reasons %v)", verdict, tc.verdict, reasons)
+			}
+			has := false
+			for _, r := range reasons {
+				if r == tc.reason {
+					has = true
+				}
+			}
+			if !has {
+				t.Fatalf("reasons = %v, want %s", reasons, tc.reason)
+			}
+		})
+	}
+}
+
+// TestTerminalStatesAreClosed pins the state-machine guards: terminal keywords
+// neither take new observations nor flip to another terminal state.
+func TestTerminalStatesAreClosed(t *testing.T) {
+	t.Run("discarded keyword cannot be marked too broad", func(t *testing.T) {
+		k := NewSeed(mustKey(t, "ai agent"), time.Now())
+		if err := k.Discard("no longer relevant"); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.MarkTooBroad("too broad"); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("err = %v, want ErrInvalidTransition", err)
+		}
+		if k.State() != StateDiscarded || k.TooBroad() {
+			t.Fatal("discarded keyword must stay discarded")
+		}
+	})
+
+	t.Run("too broad keyword accepts no observations", func(t *testing.T) {
+		k := NewSeed(mustKey(t, "ai agent"), time.Now())
+		if err := k.MarkTooBroad("too broad"); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.RecordObservation(mustObs(t, Window30D, 10, 20)); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("err = %v, want ErrInvalidTransition", err)
+		}
+	})
+
+	t.Run("too broad keyword cannot be re-marked", func(t *testing.T) {
+		k := NewSeed(mustKey(t, "ai agent"), time.Now())
+		if err := k.MarkTooBroad("first reason"); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.MarkTooBroad("second reason"); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("err = %v, want ErrInvalidTransition", err)
+		}
+		if k.TooBroadReason() != "first reason" {
+			t.Fatalf("reason = %q, want the original reason", k.TooBroadReason())
+		}
+	})
+
+	t.Run("discarded keyword accepts no observations", func(t *testing.T) {
+		k := NewSeed(mustKey(t, "ai agent"), time.Now())
+		if err := k.Discard("done"); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.RecordObservation(mustObs(t, Window30D, 10, 20)); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("err = %v, want ErrInvalidTransition", err)
+		}
+	})
+}

@@ -3,7 +3,8 @@ package hotsearch
 // Verdict is the outcome of BR-01's multi-window cross-check.
 type Verdict string
 
-// Verdict values. Only Emerging and Sustained may become the next seed.
+// Verdict values. Only Emerging, Sustained and SeasonalGrowth may become the
+// next seed.
 const (
 	VerdictUnknown        Verdict = "UNKNOWN"
 	VerdictInsufficient   Verdict = "INSUFFICIENT"

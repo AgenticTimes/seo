@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"seo/internal/discovery/application/support"
 	"seo/internal/discovery/domain/hotsearch"
 	"seo/internal/evaluation/domain/opportunity"
-	"seo/internal/shared/kernel"
 )
 
 // Command is a decision.
@@ -42,7 +42,7 @@ func New(keywords hotsearch.Repository, opps opportunity.Repository, now func() 
 // Execute applies the decision.
 func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	var out Result
-	key, err := keyFrom(cmd.Term, cmd.Country, cmd.Entity)
+	key, err := support.KeyFromStrings(cmd.Term, cmd.Country, cmd.Entity)
 	if err != nil {
 		return out, err
 	}
@@ -52,10 +52,7 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	if err != nil {
 		return out, fmt.Errorf("load opportunity %s: %w", key, err)
 	}
-	when := time.Now().UTC()
-	if h.now != nil {
-		when = h.now().UTC()
-	}
+	when := support.Clock(h.now)
 
 	if cmd.Approve {
 		keyword, err := h.keywords.Get(ctx, key)
@@ -79,26 +76,4 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	}
 	out.State = o.State()
 	return out, nil
-}
-
-func keyFrom(term, country, entity string) (hotsearch.Key, error) {
-	t, err := kernel.NewTerm(term)
-	if err != nil {
-		return hotsearch.Key{}, err
-	}
-	c := kernel.CountryWorldwide
-	if country != "" {
-		c, err = kernel.NewCountry(country)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	e := kernel.EntityTopic
-	if entity != "" {
-		e, err = kernel.ParseEntityType(entity)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	return hotsearch.NewKey(t, c, e)
 }

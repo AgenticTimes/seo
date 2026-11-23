@@ -124,7 +124,10 @@ func TestMergeSeriesMedian(t *testing.T) {
 		{Window: hotsearch.Window30D, Values: []int{12, 18, 33}},
 		{Window: hotsearch.Window30D, Values: []int{11, 25, 30}},
 	}
-	got := mergeSeries(runs)
+	got, err := mergeSeries(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []int{11, 20, 30}
 	if got.Window != hotsearch.Window30D {
 		t.Fatalf("window = %s", got.Window)
@@ -134,8 +137,25 @@ func TestMergeSeriesMedian(t *testing.T) {
 			t.Fatalf("median = %v, want %v", got.Values, want)
 		}
 	}
-	if one := mergeSeries(runs[:1]); len(one.Values) != 3 {
+	one, err := mergeSeries(runs[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.Values) != 3 {
 		t.Fatalf("single run changed: %+v", one)
+	}
+}
+
+// TestMergeSeriesRejectsShapeMismatch pins the guard: runs sampled at
+// different granularities cannot be merged position by position, so the
+// mismatch must surface as an error instead of a silently truncated series.
+func TestMergeSeriesRejectsShapeMismatch(t *testing.T) {
+	runs := []ports.InterestSeries{
+		{Window: hotsearch.Window30D, Values: []int{10, 20, 30}},
+		{Window: hotsearch.Window30D, Values: []int{10, 20}},
+	}
+	if _, err := mergeSeries(runs); err == nil {
+		t.Fatal("expected shape mismatch error")
 	}
 }
 

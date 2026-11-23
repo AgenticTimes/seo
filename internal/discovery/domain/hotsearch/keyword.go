@@ -145,8 +145,8 @@ func (k *Keyword) RecordObservation(o Observation) error {
 	if o.IsZero() {
 		return ErrInvalidObservation
 	}
-	if k.state == StateDiscarded {
-		return fmt.Errorf("%w: discarded keyword", ErrInvalidTransition)
+	if k.state.IsTerminal() {
+		return fmt.Errorf("%w: %s keyword accepts no observations", ErrInvalidTransition, k.state)
 	}
 	if k.observations == nil {
 		k.observations = map[Window]Observation{}
@@ -183,10 +183,14 @@ func (k *Keyword) AnalyzeChildren(total, brands int) {
 	k.signals.BrandShare = float64(brands) / float64(total)
 }
 
-// MarkTooBroad applies BR-04.
+// MarkTooBroad applies BR-04. Terminal keywords stay closed: flagging them
+// again would erase the reason they left the path.
 func (k *Keyword) MarkTooBroad(reason string) error {
 	if reason == "" {
 		return ErrReasonRequired
+	}
+	if k.state.IsTerminal() {
+		return fmt.Errorf("%w: %s keyword is closed", ErrInvalidTransition, k.state)
 	}
 	if k.state == StateSeedCandidate {
 		return fmt.Errorf("%w: already advanced", ErrInvalidTransition)
@@ -237,13 +241,20 @@ func (k *Keyword) AttachCluster(ref ClusterRef) error {
 	return nil
 }
 
-// Reopen returns a keyword to the queue for revalidation (scheduled recheck).
+// Reopen returns a decided keyword to the queue for revalidation.
 func (k *Keyword) Reopen() error {
 	if k.tooBroad {
 		return fmt.Errorf("%w: too broad keywords stay closed", ErrInvalidTransition)
 	}
+	switch k.state {
+	case StateValidated, StateSeedCandidate, StateDiscarded:
+	default:
+		return fmt.Errorf("%w: nothing to reopen from %s", ErrInvalidTransition, k.state)
+	}
 	k.state = StateDiscovered
 	k.verdict = VerdictUnknown
+	// Analysis is derived; force a fresh assessment instead of showing stale reasons.
+	k.signals = Signals{}
 	return nil
 }
 
@@ -264,6 +275,7 @@ const (
 	ReasonSeasonalGrowth = "SEASONAL_GROWTH"
 	ReasonMissing90D     = "MISSING_90D"
 	ReasonMissing12M     = "MISSING_12M"
+	ReasonThinLongWindow = "THIN_LONG_WINDOW"
 	ReasonLongTerm       = "LONG_TERM"
 	ReasonShortLived     = "SHORT_LIVED"
 	ReasonStable90D      = "STABLE_90D"
@@ -284,6 +296,8 @@ func analyzeTrend(obs map[Window]Observation, sig Signals, p TrendPolicy) (Verdi
 			reasons = append(reasons, ReasonNoisy)
 		case !hasWindow(obs, Window90D):
 			reasons = append(reasons, ReasonMissing90D)
+		case thinLongWindow(obs, p):
+			reasons = append(reasons, ReasonThinLongWindow)
 		default:
 			reasons = append(reasons, ReasonMissing12M)
 		}
@@ -318,6 +332,18 @@ func hasWindow(obs map[Window]Observation, w Window) bool {
 	return ok
 }
 
+// thinLongWindow reports whether a required long window is present but has too
+// few samples to classify a direction (BR-16). Such a window may not decide
+// the cross-check.
+func thinLongWindow(obs map[Window]Observation, p TrendPolicy) bool {
+	for _, w := range []Window{Window90D, Window12M} {
+		if o, ok := obs[w]; ok && o.Direction(p) == DirectionUnknown {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyTrend is the pure BR-01 table extended by the signal rules.
 //
 // Order matters:
@@ -325,7 +351,8 @@ func hasWindow(obs map[Window]Observation, w Window) bool {
 //  2. The current direction decides whether the word is moving at all.
 //  3. A one-off spike is an event, not growth (BR-15).
 //  4. Strong seasonality switches to the structural trend (BR-12/13).
-//  5. Otherwise the window cross-check applies.
+//  5. Otherwise the window cross-check applies. A long window that is present
+//     but too thin to classify a direction (BR-16) cannot decide the verdict.
 func classifyTrend(obs map[Window]Observation, sig Signals, p TrendPolicy) Verdict {
 	d30, ok := obs[Window30D]
 	if !ok || sig.Noisy(p) {
@@ -356,20 +383,26 @@ func classifyTrend(obs map[Window]Observation, sig Signals, p TrendPolicy) Verdi
 		return VerdictInsufficient
 	}
 
+	d90Dir := d90.Direction(p)
+	d12Dir := d12.Direction(p)
+	if d90Dir == DirectionUnknown || d12Dir == DirectionUnknown {
+		return VerdictInsufficient
+	}
+
 	if y5, ok5 := obs[Window5Y]; ok5 &&
 		y5.Direction(p) == DirectionUp &&
-		d90.Direction(p) == DirectionUp {
+		d90Dir == DirectionUp {
 		return VerdictLongTerm
 	}
 
-	if d90.Direction(p) != DirectionUp {
-		if d12.Direction(p) == DirectionUp {
+	if d90Dir != DirectionUp {
+		if d12Dir == DirectionUp {
 			return VerdictStable
 		}
 		return VerdictShortLived
 	}
 
-	if d12.Direction(p) == DirectionUp {
+	if d12Dir == DirectionUp {
 		return VerdictSustained
 	}
 	return VerdictEmerging

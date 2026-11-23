@@ -15,12 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"seo/internal/discovery/application/command/discardkeyword"
 	"seo/internal/discovery/application/command/expandkeyword"
 	"seo/internal/discovery/application/command/judgetrend"
 	"seo/internal/discovery/application/command/marktoobroad"
 	"seo/internal/discovery/application/command/openverification"
 	"seo/internal/discovery/application/command/promote"
 	"seo/internal/discovery/application/command/recordobservation"
+	"seo/internal/discovery/application/command/reopenkeyword"
 	"seo/internal/discovery/application/command/startexploration"
 	"seo/internal/discovery/application/query"
 	"seo/internal/discovery/domain/hotsearch"
@@ -44,6 +46,8 @@ type App struct {
 	Assess    *judgetrend.Handler
 	Advance   *promote.Handler
 	Broad     *marktoobroad.Handler
+	Discard   *discardkeyword.Handler
+	Reopen    *reopenkeyword.Handler
 	Verify    *openverification.Handler
 	Dashboard *query.DashboardHandler
 	Advice    *query.Advisor
@@ -64,6 +68,7 @@ type Server struct {
 func New(app *App) (*Server, error) {
 	if app == nil || app.Start == nil || app.Expand == nil || app.Observe == nil ||
 		app.Assess == nil || app.Advance == nil || app.Broad == nil ||
+		app.Discard == nil || app.Reopen == nil ||
 		app.Verify == nil || app.Dashboard == nil || app.Advice == nil ||
 		app.CreateOpportunity == nil || app.AttachEvidence == nil ||
 		app.DecideOpportunity == nil || app.Opportunities == nil {
@@ -91,6 +96,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /assess", s.assess)
 	mux.HandleFunc("POST /advance", s.advance)
 	mux.HandleFunc("POST /broad", s.markBroad)
+	mux.HandleFunc("POST /discard", s.discard)
+	mux.HandleFunc("POST /reopen", s.reopen)
 	mux.HandleFunc("POST /verify", s.openVerify)
 	mux.HandleFunc("POST /opportunity/create", s.createOpportunity)
 	mux.HandleFunc("POST /opportunity/evidence", s.attachEvidence)
@@ -103,6 +110,8 @@ type pageData struct {
 	Selected        *hotsearch.Keyword
 	CanExpand       bool
 	CanAdvance      bool
+	CanDiscard      bool
+	CanReopen       bool
 	AllowSeed       bool
 	Closed          bool
 	Captcha         bool
@@ -150,6 +159,11 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		data.CanExpand = data.Selected.CanBeExpanded()
 		data.AllowSeed = data.Selected.Verdict().AllowsSeed()
 		data.Closed = data.Selected.State().IsTerminal()
+		data.CanDiscard = !data.Closed
+		switch data.Selected.State() {
+		case hotsearch.StateValidated, hotsearch.StateSeedCandidate, hotsearch.StateDiscarded:
+			data.CanReopen = !data.Selected.TooBroad()
+		}
 		// A root seed is already the origin of the graph; there is nothing to
 		// promote. Only discovered children can become next-round seeds.
 		data.CanAdvance = data.AllowSeed &&
@@ -393,6 +407,43 @@ func opportunityEligibility(keyword *hotsearch.Keyword, signals hotsearch.Signal
 		return false, fmt.Sprintf("当前判定为「%s」，需要新兴 / 持续增长 / 季节性增长。", verdictLabel(keyword.Verdict()))
 	}
 	return true, ""
+}
+
+func (s *Server) discard(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithTimeout(r, 20*time.Second)
+	defer cancel()
+
+	key, ok := formKey(r)
+	if !ok {
+		redirect(w, r, nil, "", "无效的关键词")
+		return
+	}
+	if _, err := s.app.Discard.Execute(ctx, discardkeyword.Command{
+		Term: string(key.Term), Country: string(key.Country), Entity: string(key.Entity),
+		Reason: strings.TrimSpace(r.FormValue("reason")),
+	}); err != nil {
+		s.fail(w, r, &key, err)
+		return
+	}
+	redirect(w, r, &key, "已放弃该词", "")
+}
+
+func (s *Server) reopen(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithTimeout(r, 20*time.Second)
+	defer cancel()
+
+	key, ok := formKey(r)
+	if !ok {
+		redirect(w, r, nil, "", "无效的关键词")
+		return
+	}
+	if _, err := s.app.Reopen.Execute(ctx, reopenkeyword.Command{
+		Term: string(key.Term), Country: string(key.Country), Entity: string(key.Entity),
+	}); err != nil {
+		s.fail(w, r, &key, err)
+		return
+	}
+	redirect(w, r, &key, "已重新打开，请重新判定趋势", "")
 }
 
 func (s *Server) openVerify(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +935,8 @@ func reasonLabel(reason string) string {
 		return "缺少 90D 数据"
 	case hotsearch.ReasonMissing12M:
 		return "缺少 12M 数据"
+	case hotsearch.ReasonThinLongWindow:
+		return "90D / 12M 采样点不足，无法判定方向"
 	case hotsearch.ReasonLongTerm:
 		return "5Y 长期上涨，属于长期赛道而非新机会"
 	case hotsearch.ReasonShortLived:

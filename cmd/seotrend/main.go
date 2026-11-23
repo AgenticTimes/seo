@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -12,12 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"seo/internal/discovery/application/command/discardkeyword"
 	"seo/internal/discovery/application/command/expandkeyword"
 	"seo/internal/discovery/application/command/judgetrend"
 	"seo/internal/discovery/application/command/marktoobroad"
 	"seo/internal/discovery/application/command/openverification"
 	"seo/internal/discovery/application/command/promote"
 	"seo/internal/discovery/application/command/recordobservation"
+	"seo/internal/discovery/application/command/reopenkeyword"
 	"seo/internal/discovery/application/command/startexploration"
 	"seo/internal/discovery/application/query"
 	"seo/internal/discovery/domain/hotsearch"
@@ -31,7 +34,10 @@ import (
 	"seo/internal/interfaces/web"
 )
 
-func main() {
+// run holds the whole program so its defers release the database and the
+// gateway (a launched Chrome) even when a later step fails; log.Fatalf would
+// exit without running them.
+func run() error {
 	dbPath := flag.String("db", "seo.db", "SQLite database file (use :memory: for a throwaway run)")
 	addr := flag.String("addr", "127.0.0.1:8080", "HTTP listen address")
 	gatewayName := flag.String("gateway", "fake", "trends data source: fake or browser")
@@ -46,7 +52,7 @@ func main() {
 
 	db, err := sqlite.Open(*dbPath)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -57,7 +63,7 @@ func main() {
 
 	gateway, stopGateway, err := buildGateway(*gatewayName, *chromePath, *headless, *trendsBase, *trendsProxy, *chromeRemote, *minInterval, *trendSamples)
 	if err != nil {
-		log.Fatalf("build gateway: %v", err)
+		return fmt.Errorf("build gateway: %w", err)
 	}
 	defer stopGateway()
 
@@ -68,6 +74,8 @@ func main() {
 		Assess:    judgetrend.New(repo, trend),
 		Advance:   promote.New(repo, expansion),
 		Broad:     marktoobroad.New(repo),
+		Discard:   discardkeyword.New(repo),
+		Reopen:    reopenkeyword.New(repo),
 		Verify:    openverification.New(gateway),
 		Dashboard: query.NewDashboard(repo),
 		Advice:    query.NewAdvisor(repo),
@@ -79,7 +87,7 @@ func main() {
 	}
 	server, err := web.New(app)
 	if err != nil {
-		log.Fatalf("build web server: %v", err)
+		return fmt.Errorf("build web server: %w", err)
 	}
 
 	httpServer := &http.Server{
@@ -98,8 +106,15 @@ func main() {
 	}()
 
 	log.Printf("SEO trend explorer on http://%s (db=%s, gateway=%s)", *addr, *dbPath, *gatewayName)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("serve: %v", err)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatalf("%v", err)
 	}
 }
 

@@ -50,6 +50,30 @@ func TestDecomposeSeparatesSeasonAndTrend(t *testing.T) {
 	}
 }
 
+// TestSpikeRatioMedianBalanced pins the median: for an even count the two
+// middle samples are averaged, so the base does not lean toward the upper half.
+func TestSpikeRatioMedianBalanced(t *testing.T) {
+	values := []int{1, 2, 3, 9}
+	samples := make([]Index, len(values))
+	for i, v := range values {
+		idx, err := NewIndex(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples[i] = idx
+	}
+	// median(1,2,3,9) = 2.5, so the ratio is 9/2.5 = 3.6, not 9/3 = 3.
+	if got := spikeRatio(samples); math.Abs(got-3.6) > 1e-9 {
+		t.Fatalf("spikeRatio = %.4f, want 3.6", got)
+	}
+	if got := medianEven([]int{1, 2, 3, 4}); got != 2.5 {
+		t.Fatalf("medianEven = %.1f, want 2.5", got)
+	}
+	if got := medianEven([]int{1, 2, 5}); got != 2 {
+		t.Fatalf("medianEven odd = %.1f, want 2", got)
+	}
+}
+
 func TestIntentRules(t *testing.T) {
 	cases := map[string]Intent{
 		"claude ai login":       IntentNavigational,

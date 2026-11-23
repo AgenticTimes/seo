@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"seo/internal/discovery/application/support"
 	"seo/internal/discovery/domain/hotsearch"
 	"seo/internal/evaluation/domain/opportunity"
-	"seo/internal/shared/kernel"
 )
 
 // Command records one evidence item.
@@ -42,7 +42,7 @@ func New(opps opportunity.Repository, now func() time.Time) *Handler {
 // Execute loads, attaches and saves.
 func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	var out Result
-	key, err := keyFrom(cmd.Term, cmd.Country, cmd.Entity)
+	key, err := support.KeyFromStrings(cmd.Term, cmd.Country, cmd.Entity)
 	if err != nil {
 		return out, err
 	}
@@ -52,11 +52,7 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	if err != nil {
 		return out, err
 	}
-	when := time.Now().UTC()
-	if h.now != nil {
-		when = h.now().UTC()
-	}
-	evidence, err := opportunity.NewEvidence(source, cmd.URL, cmd.Summary, when)
+	evidence, err := opportunity.NewEvidence(source, cmd.URL, cmd.Summary, support.Clock(h.now))
 	if err != nil {
 		return out, err
 	}
@@ -74,26 +70,4 @@ func (h *Handler) Execute(ctx context.Context, cmd Command) (Result, error) {
 	out.State = o.State()
 	out.Count = len(o.Evidence())
 	return out, nil
-}
-
-func keyFrom(term, country, entity string) (hotsearch.Key, error) {
-	t, err := kernel.NewTerm(term)
-	if err != nil {
-		return hotsearch.Key{}, err
-	}
-	c := kernel.CountryWorldwide
-	if country != "" {
-		c, err = kernel.NewCountry(country)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	e := kernel.EntityTopic
-	if entity != "" {
-		e, err = kernel.ParseEntityType(entity)
-		if err != nil {
-			return hotsearch.Key{}, err
-		}
-	}
-	return hotsearch.NewKey(t, c, e)
 }

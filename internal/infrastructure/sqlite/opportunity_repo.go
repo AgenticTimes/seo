@@ -36,15 +36,27 @@ func (r *OpportunityRepository) Get(ctx context.Context, key hotsearch.Key) (*op
 		}
 		return nil, fmt.Errorf("sqlite: get opportunity %s: %w", key, err)
 	}
+	decoded, err := decodeEvidence(evidence)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: get opportunity %s: %w", key, err)
+	}
+	created, err := parseStoredTime("created_at", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: get opportunity %s: %w", key, err)
+	}
+	updated, err := parseStoredTime("updated_at", updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: get opportunity %s: %w", key, err)
+	}
 	return opportunity.Rehydrate(opportunity.Snapshot{
 		Key:       key,
 		Intent:    hotsearch.Intent(intent),
 		Trend:     hotsearch.Verdict(trend),
 		State:     opportunity.State(state),
 		Note:      note,
-		Evidence:  decodeEvidence(evidence),
-		CreatedAt: parseTimeOrZero(createdAt),
-		UpdatedAt: parseTimeOrZero(updatedAt),
+		Evidence:  decoded,
+		CreatedAt: created,
+		UpdatedAt: updated,
 	})
 }
 
@@ -89,21 +101,25 @@ func (r *OpportunityRepository) Exists(ctx context.Context, key hotsearch.Key) (
 	return true, nil
 }
 
-func decodeEvidence(raw string) []opportunity.Evidence {
-	var out []opportunity.Evidence
+// decodeEvidence parses the stored evidence JSON. Corrupt JSON is an error:
+// silently dropping evidence would forge a decision record.
+func decodeEvidence(raw string) ([]opportunity.Evidence, error) {
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
+	var out []opportunity.Evidence
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
+		return nil, fmt.Errorf("sqlite: decode evidence: %w", err)
 	}
-	return out
+	return out, nil
 }
 
-func parseTimeOrZero(raw string) time.Time {
+// parseStoredTime parses a stored timestamp. A corrupt value is an error: a
+// zero time would hide when the decision was made.
+func parseStoredTime(field, raw string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, fmt.Errorf("sqlite: parse %s %q: %w", field, raw, err)
 	}
-	return t
+	return t, nil
 }

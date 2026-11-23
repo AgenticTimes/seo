@@ -88,3 +88,47 @@ func TestOpportunityRoundTrip(t *testing.T) {
 		t.Fatalf("missing err = %v", err)
 	}
 }
+
+// TestGetRejectsCorruptRows pins the storage contract: a corrupt evidence
+// column or timestamp surfaces as an error, never as silently dropped
+// evidence or a zero time.
+func TestGetRejectsCorruptRows(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "corrupt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	repo := sqlite.NewOpportunityRepository(db)
+
+	key := oppKey(t, "agent memory")
+	o, err := opportunity.New(key, hotsearch.IntentInformational, hotsearch.VerdictEmerging, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		column string
+		value  string
+	}{
+		{"bad evidence json", "evidence", `{not-json`},
+		{"bad created_at", "created_at", "not-a-time"},
+		{"bad updated_at", "updated_at", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := db.ExecContext(ctx,
+				`UPDATE opportunities SET `+tc.column+` = ? WHERE term = ?`,
+				tc.value, string(key.Term)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.Get(ctx, key); err == nil {
+				t.Fatalf("corrupt %s must fail Get", tc.column)
+			}
+		})
+	}
+}

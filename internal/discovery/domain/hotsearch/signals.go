@@ -137,12 +137,25 @@ func spikeRatio(samples []Index) float64 {
 	}
 	sort.Ints(values)
 	max := values[len(values)-1]
-	median := values[len(values)/2]
-	base := float64(median)
+	base := medianEven(values)
 	if base < 1 {
 		base = 1
 	}
 	return float64(max) / base
+}
+
+// medianEven is the true median. For an even count it averages the two middle
+// samples, so the estimate does not lean toward the upper half.
+func medianEven(values []int) float64 {
+	n := len(values)
+	if n == 0 {
+		return 0
+	}
+	mid := n / 2
+	if n%2 == 1 {
+		return float64(values[mid])
+	}
+	return float64(values[mid-1]+values[mid]) / 2
 }
 
 func floatSamples(samples []Index) []float64 {

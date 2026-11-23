@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"seo/internal/discovery/application/command/discardkeyword"
 	"seo/internal/discovery/application/command/expandkeyword"
 	"seo/internal/discovery/application/command/judgetrend"
 	"seo/internal/discovery/application/command/marktoobroad"
 	"seo/internal/discovery/application/command/promote"
 	"seo/internal/discovery/application/command/recordobservation"
+	"seo/internal/discovery/application/command/reopenkeyword"
 	"seo/internal/discovery/application/command/startexploration"
 	"seo/internal/discovery/application/query"
 	"seo/internal/discovery/domain/hotsearch"
@@ -29,6 +31,8 @@ type flow struct {
 	assess  *judgetrend.Handler
 	advance *promote.Handler
 	broad   *marktoobroad.Handler
+	discard *discardkeyword.Handler
+	reopen  *reopenkeyword.Handler
 	dash    *query.DashboardHandler
 }
 
@@ -46,6 +50,8 @@ func newFlow() *flow {
 		assess:  judgetrend.New(repo, trend),
 		advance: promote.New(repo, exp),
 		broad:   marktoobroad.New(repo),
+		discard: discardkeyword.New(repo),
+		reopen:  reopenkeyword.New(repo),
 		dash:    query.NewDashboard(repo),
 	}
 }
@@ -277,5 +283,79 @@ func TestJudgeTrendComputesBrandShare(t *testing.T) {
 	}
 	if math.Abs(loaded.Signals().BrandShare-1.0/3.0) > 1e-9 {
 		t.Fatalf("persisted brand share = %v", loaded.Signals().BrandShare)
+	}
+}
+
+func TestDiscardAndReopen(t *testing.T) {
+	f := newFlow()
+	root := f.seed(t, "ai agent")
+	first, err := f.expand.Execute(f.ctx, expandkeyword.Command{Term: root.Term.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := first.Created[0]
+	f.observeAll(t, target)
+	if _, err := f.assess.Execute(f.ctx, judgetrend.Command{Term: target.Term.String()}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.discard.Execute(f.ctx, discardkeyword.Command{Term: target.Term.String()}); !errors.Is(err, hotsearch.ErrReasonRequired) {
+		t.Fatalf("discard without reason err = %v", err)
+	}
+	discarded, err := f.discard.Execute(f.ctx, discardkeyword.Command{Term: target.Term.String(), Reason: "not relevant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discarded.State != hotsearch.StateDiscarded {
+		t.Fatalf("state = %s", discarded.State)
+	}
+	if _, err := f.advance.Execute(f.ctx, promote.Command{Term: target.Term.String()}); err == nil {
+		t.Fatal("discarded keyword must not promote")
+	}
+
+	reopened, err := f.reopen.Execute(f.ctx, reopenkeyword.Command{Term: target.Term.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.State != hotsearch.StateDiscovered {
+		t.Fatalf("state = %s", reopened.State)
+	}
+	loaded, err := f.repo.Get(f.ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Verdict() != hotsearch.VerdictUnknown {
+		t.Fatalf("verdict = %s, want UNKNOWN after reopen", loaded.Verdict())
+	}
+	if !loaded.Signals().IsZero() {
+		t.Fatalf("signals must reset on reopen: %+v", loaded.Signals())
+	}
+	if _, err := f.reopen.Execute(f.ctx, reopenkeyword.Command{Term: target.Term.String()}); !errors.Is(err, hotsearch.ErrInvalidTransition) {
+		t.Fatalf("reopen twice err = %v", err)
+	}
+}
+
+func TestDashboardListsSeedCandidates(t *testing.T) {
+	f := newFlow()
+	root := f.seed(t, "ai agent")
+	first, err := f.expand.Execute(f.ctx, expandkeyword.Command{Term: root.Term.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	promoted := 0
+	for _, key := range first.Created {
+		if f.promoteIfEligible(t, key) {
+			promoted++
+		}
+	}
+	view, err := f.dash.Execute(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Candidates) != promoted {
+		t.Fatalf("candidates = %d, want %d", len(view.Candidates), promoted)
+	}
+	if promoted > 0 && view.Stats.SeedCandidates != promoted {
+		t.Fatalf("stats candidates = %d, want %d", view.Stats.SeedCandidates, promoted)
 	}
 }

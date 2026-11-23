@@ -90,6 +90,20 @@
         </ul>
       </div>
 
+      <div class="card mt-4">
+        <div class="card-header fw-semibold">种子候选（可开启下一轮）</div>
+        <ul class="list-group list-group-flush">
+          {{range .View.Candidates}}
+          <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <a class="text-decoration-none" href="/?k={{urlquery .Key.String}}">{{.Key.Term}}</a>
+            <span class="badge {{stateClass .State}}">深度 {{.Depth}}</span>
+          </li>
+          {{else}}
+          <li class="list-group-item text-secondary small">还没有候选。判定为「新兴 / 持续增长 / 季节性增长」的子词可点 ⑥ 晋级。</li>
+          {{end}}
+        </ul>
+      </div>
+
     </div>
 
     <div class="col-xl-8">
@@ -177,6 +191,24 @@
               <button class="btn btn-outline-success step-btn" {{if not .CanAdvance}}disabled title="需要「新兴/持续增长」判定，且必须是扩展出来的子词（种子本身就是起点）"{{end}}>⑥ 进入下一轮</button>
             </form>
           </div>
+
+          {{if or .CanDiscard .CanReopen}}
+          <div class="d-flex flex-wrap gap-2 mb-4">
+            {{if .CanDiscard}}
+            <form method="post" action="/discard" class="d-flex gap-2">
+              {{hiddenKey .Selected.Key}}
+              <input class="form-control form-control-sm" name="reason" placeholder="放弃原因" required>
+              <button class="btn btn-outline-secondary btn-sm text-nowrap">放弃</button>
+            </form>
+            {{end}}
+            {{if .CanReopen}}
+            <form method="post" action="/reopen">
+              {{hiddenKey .Selected.Key}}
+              <button class="btn btn-outline-secondary btn-sm">重新打开（需重新判定）</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
 
           <div class="row g-4">
             <div class="col-lg-7">

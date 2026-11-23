@@ -270,21 +270,24 @@ func (b *Browser) InterestOverTime(ctx context.Context, req ports.InterestReques
 		}
 		series = append(series, s)
 	}
-	return mergeSeries(series), nil
+	return mergeSeries(series)
 }
 
-// mergeSeries computes a point-wise median across repeated runs.
-func mergeSeries(runs []ports.InterestSeries) ports.InterestSeries {
+// mergeSeries computes a point-wise median across repeated runs. Runs whose
+// sampled shapes disagree cannot be merged position by position — the values
+// would belong to different points of the series — so that is an error, not a
+// silent truncation.
+func mergeSeries(runs []ports.InterestSeries) (ports.InterestSeries, error) {
 	if len(runs) == 0 {
-		return ports.InterestSeries{}
+		return ports.InterestSeries{}, nil
 	}
 	if len(runs) == 1 {
-		return runs[0]
+		return runs[0], nil
 	}
 	n := len(runs[0].Values)
 	for _, run := range runs[1:] {
-		if len(run.Values) < n {
-			n = len(run.Values)
+		if len(run.Values) != n {
+			return ports.InterestSeries{}, fmt.Errorf("trends: repeated fetches disagree on shape (%d vs %d points); retry", n, len(run.Values))
 		}
 	}
 	out := ports.InterestSeries{
@@ -300,13 +303,19 @@ func mergeSeries(runs []ports.InterestSeries) ports.InterestSeries {
 		}
 		out.Values[i] = medianInt(buf)
 	}
-	return out
+	return out, nil
 }
 
+// medianInt is the true median. For an even count it rounds the average of the
+// two middle samples, so the estimate does not lean toward the upper half.
 func medianInt(values []int) int {
 	cp := append([]int(nil), values...)
 	sort.Ints(cp)
-	return cp[len(cp)/2]
+	n := len(cp)
+	if n%2 == 1 {
+		return cp[n/2]
+	}
+	return (cp[n/2-1] + cp[n/2]) / 2
 }
 
 func (b *Browser) query(ctx context.Context, term kernel.Term, country kernel.Country, entity kernel.EntityType, window hotsearch.Window, wantSeries, wantRelated bool) (browserPayload, error) {
